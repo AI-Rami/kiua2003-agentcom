@@ -1,0 +1,12 @@
+Date: 2026-08-30
+Command: python ping_pong.py --turns 2
+Mode: Real Ollama model
+Model: llama3.2:3b
+Temperature: 0.3
+Budget: 2 turns, 4000 tokens, 120 seconds
+
+Buyer: I'll start with a low offer of NOK 150000. OFFER: 150000
+
+Seller: I can do better than that. My price is non-negotiable, but I can meet you halfway. OFFER: 175000
+
+[stopped: max_turns (2 turns, 404 tokens, 8.1s)]

@@ -1,7 +1,7 @@
 """engine.py: WEEK 2 target: a reusable two-agent dialogue engine.
 
 The guardrails (Budget) and the bookkeeping (Entry, save) are DONE.
-You implement the two parts marked `# TODO (WEEK 2)`:
+The two WEEK 2 parts are implemented:
   1. view_for(...)      - render the conversation from one agent's point of view
   2. DialogueEngine.run - the orchestration loop
 
@@ -42,8 +42,64 @@ def view_for(agent, transcript):
     Tip: test it by hand-building a 3-entry transcript and printing the view for
     each of your two agents; the roles should be mirror images.
     """
-    # TODO (WEEK 2): implement and DELETE the line below.
-    raise NotImplementedError("Implement view_for; see the docstring.")
+    messages = [{"role": "system", "content": agent.system_prompt}]
+
+    for entry in transcript:
+        role = "assistant" if entry.speaker == agent.name else "user"
+        messages.append({"role": role, "content": entry.content})
+
+    if not transcript:
+        messages.append({"role": "user", "content": "You speak first."})
+
+    return messages
+
+
+
+
+
+def truncate_context(messages, max_messages=20):
+    """
+    Keep the system prompt and only the most recent messages.
+
+    This prevents the conversation history sent to the LLM
+    from growing indefinitely and eventually exceeding the
+    model's context window.
+
+    Important:
+    This does NOT delete anything from self.transcript.
+    It only reduces what is sent to the LLM for this call.
+    """
+
+    # If the message list is still small enough,
+    # return it unchanged.
+    if len(messages) <= max_messages:
+        return messages
+
+    # LOG:
+    # This line runs only when truncation actually happens.
+    # It lets us see in the terminal that context management
+    # has been activated.
+    print(
+        f"[context] truncating from {len(messages)} "
+        f"to {max_messages} messages"
+    )
+
+    # messages[0] is the system prompt.
+    # We always keep it because it contains the agent's persona/instructions.
+    system_prompt = messages[0]
+
+    # Keep the newest messages from the conversation.
+    # We subtract 1 because one place is already used
+    # by the system prompt.
+    recent_messages = messages[-(max_messages - 1):]
+
+    # Return:
+    # system prompt + most recent conversation messages.
+    return [system_prompt] + recent_messages
+
+
+
+
 
 
 class DialogueEngine:
@@ -72,7 +128,7 @@ class DialogueEngine:
     def run(self):
         """Run the dialogue to completion. Return the final transcript.
 
-        Loop shape (fill in the body):
+        Loop shape:
             while not self.budget.exhausted():
                 speaker = self.next_speaker()
                 messages = self.manage_context(view_for(speaker, self.transcript))
@@ -85,8 +141,26 @@ class DialogueEngine:
                     self.budget.stop("goal_reached")
             return self.transcript
         """
-        # TODO (WEEK 2): implement the loop above and DELETE this line.
-        raise NotImplementedError("Implement DialogueEngine.run; see the docstring.")
+        while not self.budget.exhausted():
+            speaker = self.next_speaker()
+            messages = self.manage_context(view_for(speaker, self.transcript))
+            reply = self.client.chat(speaker.model, messages, speaker.temperature)
+
+            entry = Entry(
+                speaker=speaker.name,
+                content=reply.text,
+                prompt_tokens=reply.prompt_tokens,
+                completion_tokens=reply.completion_tokens,
+                seconds=reply.seconds,
+                turn_index=len(self.transcript),
+            )
+            self.transcript.append(entry)
+            self.budget.record(turns=1, tokens=reply.tokens)
+
+            if self.goal_reached(self.transcript):
+                self.budget.stop("goal_reached")
+
+        return self.transcript
 
     # === bookkeeping below is DONE ===
 

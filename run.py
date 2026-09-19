@@ -30,7 +30,7 @@ def run_config(path, mock):
 
     from agents import Agent
     from budget import Budget
-    from engine import DialogueEngine
+    from engine import DialogueEngine, truncate_context
 
     with open(path) as f:
         cfg = yaml.safe_load(f)
@@ -38,7 +38,27 @@ def run_config(path, mock):
     budget = Budget(**cfg.get("budget", {}))
     client = make_client(mock=mock)
 
-    engine = DialogueEngine(agents, client, budget)
+
+
+    # Create the dialogue engine.
+    #
+    # manage_context tells the engine how to control
+    # the size of the conversation history before it is
+    # sent to the LLM.
+    #
+    # Here we use truncation and allow a maximum
+    # of 20 messages per model call.
+    engine = DialogueEngine(
+        agents,
+        client,
+        budget,
+        manage_context=lambda messages: truncate_context(
+            messages,
+            max_messages=20
+        ),
+    )
+
+
     transcript = engine.run()
 
     for e in transcript:
