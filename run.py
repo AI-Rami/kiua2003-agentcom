@@ -9,7 +9,7 @@ Two modes:
         python run.py --config configs/debate.yaml --mock
 """
 import argparse
-
+import json
 from llm_client import make_client
 
 
@@ -23,6 +23,48 @@ def smoke(mock):
     print("Model replied:", r.text)
     print(f"(prompt={r.prompt_tokens} tokens, completion={r.completion_tokens} tokens, "
           f"{r.seconds:.2f}s)")
+
+
+
+def negotiation_goal_reached(transcript):
+    """
+    Check whether the latest agent accepted the previous agent's offer.
+
+    A deal is reached only when:
+      1. There are at least two messages.
+      2. The newest message has "accepted": true.
+      3. The accepted price is exactly the same as the previous offer.
+    """
+
+    # We need at least one offer and one reply.
+    if len(transcript) < 2:
+        return False
+
+    # Import here because parse_agent_reply is defined in engine.py.
+    from engine import parse_agent_reply
+
+    try:
+        # Read the previous agent's structured reply.
+        previous = parse_agent_reply(transcript[-2].content)
+
+        # Read the newest agent's structured reply.
+        current = parse_agent_reply(transcript[-1].content)
+
+    # If either message contains invalid JSON,
+    # do not stop the negotiation.
+    except (json.JSONDecodeError, ValueError):
+        return False
+
+    # A deal exists only if the newest agent explicitly accepted
+    # the exact price offered in the previous message.
+    return (
+        current["accepted"] is True
+        and current["offer"] == previous["offer"]
+    )
+
+
+
+
 
 
 def run_config(path, mock):
@@ -52,6 +94,13 @@ def run_config(path, mock):
         agents,
         client,
         budget,
+
+        # Stop the conversation when one agent explicitly
+        # accepts the previous agent's exact offer.
+        goal_reached=negotiation_goal_reached,
+
+        # Keep the system prompt and only the most recent
+        # messages when the context becomes too large.
         manage_context=lambda messages: truncate_context(
             messages,
             max_messages=20

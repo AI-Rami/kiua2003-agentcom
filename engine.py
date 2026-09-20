@@ -102,6 +102,63 @@ def truncate_context(messages, max_messages=20):
 
 
 
+
+def parse_agent_reply(text):
+    """
+    Convert an agent's JSON reply from text into a Python dictionary.
+
+    Expected LLM reply:
+
+        {
+            "message": "I accept NOK 196500.",
+            "offer": 196500,
+            "accepted": true
+        }
+
+    Python can then directly read:
+
+        data["message"]
+        data["offer"]
+        data["accepted"]
+
+    This means Python does not need to understand the natural-language
+    negotiation message itself.
+    """
+
+    # The LLM response arrives as text.
+    # json.loads() converts valid JSON text into a Python dictionary.
+    data = json.loads(text)
+
+    # Make sure the model returned a JSON object/dictionary.
+    if not isinstance(data, dict):
+        raise ValueError("Agent reply must be a JSON object.")
+
+    # Check that all fields required by our protocol are present.
+    if "message" not in data:
+        raise ValueError("Agent reply is missing 'message'.")
+
+    if "offer" not in data:
+        raise ValueError("Agent reply is missing 'offer'.")
+
+    if "accepted" not in data:
+        raise ValueError("Agent reply is missing 'accepted'.")
+
+    # Validate the type of each field.
+    if not isinstance(data["message"], str):
+        raise ValueError("'message' must be text.")
+
+    if isinstance(data["offer"], bool) or not isinstance(data["offer"], int):
+        raise ValueError("'offer' must be an integer.")
+
+    if not isinstance(data["accepted"], bool):
+        raise ValueError("'accepted' must be true or false.")
+
+    return data
+
+
+
+
+
 class DialogueEngine:
     """Runs two (or more) agents in turn until a Budget stop fires.
 
@@ -144,18 +201,103 @@ class DialogueEngine:
         while not self.budget.exhausted():
             speaker = self.next_speaker()
             messages = self.manage_context(view_for(speaker, self.transcript))
-            reply = self.client.chat(speaker.model, messages, speaker.temperature)
+            reply = self.client.chat(
+                speaker.model,
+                messages,
+                speaker.temperature
+            )
+            # Keep track of the total cost of this turn.
+            # Normally there is one LLM call.
+            # If we need a retry, we will add the retry cost too.
+            total_prompt_tokens = reply.prompt_tokens
+            total_completion_tokens = reply.completion_tokens
+            total_seconds = reply.seconds
+
+            # ---------------------------------------------------------
+            # WEEK 3: CHECK THE STRUCTURED JSON
+            # ---------------------------------------------------------
+            #
+            # The agent is required to return valid JSON.
+            # First, try to parse the reply.
+            try:
+                parse_agent_reply(reply.text)
+
+            # If the JSON is invalid, ask the same agent to try once again.
+            except (json.JSONDecodeError, ValueError) as error:
+
+                print(
+                    f"[structure] Invalid JSON from {speaker.name}. "
+                    f"Retrying once. Error: {error}"
+                )
+
+                retry_messages = messages + [
+                    {
+                        "role": "assistant",
+                        "content": reply.text,
+                    },
+                    {
+                        "role": "user",
+                        "content":
+                            "Your previous response was not valid JSON. "
+                            f"Error: {error}. "
+                            "Reply again using ONLY valid JSON in this format: "
+                            '{"message": "your short negotiation reply", '
+                            '"offer": 195000, "accepted": false}.'
+                    },
+                ]
+
+                reply = self.client.chat(
+                    speaker.model,
+                    retry_messages,
+                    speaker.temperature
+                )
+                # A retry is another LLM call, so include its cost.
+                total_prompt_tokens += reply.prompt_tokens
+                total_completion_tokens += reply.completion_tokens
+                total_seconds += reply.seconds
+
+            # ---------------------------------------------------------
+            # FINAL STRUCTURE CHECK
+            # ---------------------------------------------------------
+            #
+            # Check the reply one last time.
+            # This may be either the original reply or the retry reply.
+            try:
+                parse_agent_reply(reply.text)
+
+                # JSON is valid, so save it normally.
+                reply_content = reply.text
+
+            except (json.JSONDecodeError, ValueError) as error:
+
+                print(
+                    f"[structure] Retry also failed for {speaker.name}. "
+                    f"Using safe fallback. Error: {error}"
+                )
+
+                # Create valid JSON ourselves.
+                #
+                # accepted=False is important:
+                # malformed output must never accidentally end the negotiation.
+                reply_content = json.dumps({
+                    "message": reply.text,
+                    "offer": 0,
+                    "accepted": False
+                })
 
             entry = Entry(
                 speaker=speaker.name,
-                content=reply.text,
-                prompt_tokens=reply.prompt_tokens,
-                completion_tokens=reply.completion_tokens,
-                seconds=reply.seconds,
+                content=reply_content,
+                prompt_tokens=total_prompt_tokens,
+                completion_tokens=total_completion_tokens,
+                seconds=total_seconds,
                 turn_index=len(self.transcript),
             )
             self.transcript.append(entry)
-            self.budget.record(turns=1, tokens=reply.tokens)
+            self.budget.record(
+                turns=1,
+                tokens=total_prompt_tokens + total_completion_tokens
+            )
 
             if self.goal_reached(self.transcript):
                 self.budget.stop("goal_reached")
