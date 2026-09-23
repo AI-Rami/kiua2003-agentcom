@@ -40,7 +40,7 @@ agents:
       Do not write anything outside the JSON object.
 
     model: "llama3.2:3b"
-    temperature: 0.7
+    temperature: 0.0
 
   - name: Seller
     system_prompt: >
@@ -74,6 +74,6 @@ agents:
       Do not write anything outside the JSON object.
 
     model: "llama3.2:3b"
-    temperature: 0.7
+    temperature: 0.0
 
-output: "transcripts/negotiation.json"
+output: "transcripts/negotiation_t0_run3.json"
