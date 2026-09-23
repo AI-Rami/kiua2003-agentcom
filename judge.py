@@ -251,23 +251,46 @@ def judge(transcript, client=None, model="llama3.2:3b"):
     #     "success": True
     # }
     try:
-        return json.loads(reply.text)
+        # Convert the judge's JSON text into Python data.
+        # Invalid JSON automatically raises JSONDecodeError.
+        result = json.loads(reply.text)
 
+        # We need an object containing named fields.
+        # A JSON list, number, or string is not suitable.
+        if not isinstance(result, dict):
+            raise ValueError("Judge must return a JSON object.")
 
-    # ---------------------------------------------------------
-    # 6. HANDLE INVALID JSON SAFELY
-    # ---------------------------------------------------------
-    #
-    # LLMs do not always follow formatting instructions perfectly.
-    #
-    # If the Judge returns something that is not valid JSON,
-    # json.loads() raises JSONDecodeError.
-    #
-    # Instead of allowing the whole program to crash,
-    # we catch the error and return a safe fallback.
-    except json.JSONDecodeError:
+        # The reason must be text.
+        # .get() returns None if the field is missing,
+        # so this also catches a missing reason.
+        if not isinstance(result.get("reason"), str):
+            raise ValueError("Judge reason must be text.")
+
+        # The score must be a whole number.
+        # Using type(...) is int also rejects booleans,
+        # which Python otherwise treats as a kind of integer.
+        if type(result.get("score")) is not int:
+            raise ValueError("Judge score must be an integer.")
+
+        # The whole number must be within our rubric's range.
+        if not 1 <= result["score"] <= 5:
+            raise ValueError("Judge score must be between 1 and 5.")
+
+        # Success must be True or False, not text such as "yes".
+        if type(result.get("success")) is not bool:
+            raise ValueError("Judge success must be true or false.")
+
+        # All checks passed: return the evaluation.
+        return result
+
+    except (json.JSONDecodeError, ValueError) as error:
+        # Either JSON parsing or one of our checks failed.
+        # Return an explanation instead of crashing.
+        #
+        # None means "no usable evaluation".
+        # We must not confuse a judge error with a failed negotiation.
         return {
-            "reason": "invalid JSON from judge",
-            "score": 0,
-            "success": False
+            "reason": f"Invalid judge output: {error}",
+            "score": None,
+            "success": None
         }
