@@ -11,7 +11,7 @@ Two modes:
 import argparse
 import json
 from llm_client import make_client
-
+from judge import judge
 
 def smoke(mock):
     client = make_client(mock=mock)
@@ -57,9 +57,11 @@ def negotiation_goal_reached(transcript):
 
     # A deal exists only if the newest agent explicitly accepted
     # the exact price offered in the previous message.
+    #the agreed price must be positive. Since both offers must match, this prevents accepting the fallback price of 0.
     return (
-        current["accepted"] is True
-        and current["offer"] == previous["offer"]
+            current["accepted"] is True
+            and current["offer"] == previous["offer"]
+            and previous["offer"] > 0
     )
 
 
@@ -115,6 +117,22 @@ def run_config(path, mock):
 
     out = cfg.get("output", "transcripts/run.json")
     engine.save(out, meta={"topic": cfg.get("topic"), "config": path})
+    # Evaluate the completed negotiation.
+    evaluation = judge(transcript, client=client)
+
+    # Read the transcript file we just saved.
+    with open(out, "r", encoding="utf-8") as f:
+        saved_run = json.load(f)
+
+    # Add the judge's reason, score, and success flag.
+    saved_run["judge"] = evaluation
+
+    # Save the transcript together with its evaluation.
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump(saved_run, f, indent=2)
+
+    # Show the evaluation in the terminal.
+    print("Judge:", json.dumps(evaluation, indent=2))
     print(f"[stopped: {budget.stop_reason} "
           f"({budget.turns} turns, {budget.tokens} tokens). Saved {out}]")
 
