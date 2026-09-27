@@ -14,14 +14,17 @@ agents:
       You are a buyer negotiating with a private seller for a used car
       advertised at NOK 200000. The car's condition and all other sale terms
       are fixed; only the price is negotiable.
-      Try to agree on the lowest possible price. Address the seller's latest
-      message and make a concrete offer or counteroffer.
+      Try to agree on the lowest possible price.
+      Your first offer must be NOK 130000.
+      After your first offer, increase your offer by no more than NOK 5000
+      at a time. Address the seller's latest message and make a concrete
+      offer or counteroffer.
       
       Respond ONLY with valid JSON in exactly this structure:
 
       {
         "message": "your short negotiation reply",
-        "offer": 180000,
+        "offer": 130000,
         "accepted": false
       }
 
@@ -40,22 +43,24 @@ agents:
       Do not write anything outside the JSON object.
 
     model: "llama3.2:3b"
-    temperature: 0.7
+    temperature: 1.7
 
   - name: Seller
     system_prompt: >
       You are a private seller negotiating with a buyer for a used car
       advertised at NOK 200000. The car's condition and all other sale terms
       are fixed; only the price is negotiable.
-      Try to agree on the highest possible price, using NOK 200000 as your
-      asking price. Address the buyer's latest message and make a concrete
+      Try to agree on the highest possible price.
+      Your first offer must be NOK 200000.
+      After your first offer, decrease your offer by no more than NOK 5000
+      at a time. Address the buyer's latest message and make a concrete
       offer or counteroffer.
       
       Respond ONLY with valid JSON in exactly this structure:
 
       {
         "message": "your short negotiation reply",
-        "offer": 197500,
+        "offer": 200000,
         "accepted": false
       }
 
@@ -74,6 +79,6 @@ agents:
       Do not write anything outside the JSON object.
 
     model: "llama3.2:3b"
-    temperature: 0.7
+    temperature: 1.7
 
-output: "transcripts/negotiation_t07.json"
+output: "transcripts/fail-hallucination.json"

@@ -1,29 +1,69 @@
-# Week 1 Design: Used-Car Price Negotiation
+# Design document: Used-car negotiation
+
+KIUA2003 — Compulsory 1
 
 ## Scenario and rationale
 
-Two agents negotiate the price of a used car advertised for NOK 200000. I chose negotiation because it gives the agents clearly opposing objectives and produces a numerical outcome that can be evaluated automatically.
+A Buyer and a private Seller negotiate the price of a used car advertised at NOK 200,000. The car's condition and all other sale terms are fixed. Only the price is negotiable. The Buyer seeks the lowest possible price, and the Seller seeks the highest possible price. Their different objectives make negotiation observable, while explicit acceptance provides a measurable outcome.
 
-## Agent A: Buyer
+## Agents and complete system prompts
 
-System prompt:
+The following complete system prompts are used in `configs/negotiation_t05.yaml`. Both agents use llama3.2:3b at temperature 0.5. The configured limits are 12 turns, 8,000 tokens and 120 seconds.
 
-> You are buying the used car. Your private maximum is NOK 180000. Never reveal this limit. Make the first offer and try to pay as little as possible. End every reply with exactly one action: OFFER: <integer>, ACCEPT: <integer>, or NO DEAL. Never accept more than NOK 180000. Reply in at most 2 sentences.
+### Buyer
 
-## Agent B: Seller
+```text
+You are a buyer negotiating with a private seller for a used car advertised at NOK 200000. The car's condition and all other sale terms are fixed; only the price is negotiable. Try to agree on the lowest possible price. Address the seller's latest message and make a concrete offer or counteroffer.
+Respond ONLY with valid JSON in exactly this structure:
+{
+  "message": "your short negotiation reply",
+  "offer": 180000,
+  "accepted": false
+}
+"message" contains what you want to say to the Seller. "offer" contains your current price as an integer.
+Set "accepted" to true only when you explicitly accept the Seller's latest offered price.
+If "accepted" is true, "offer" must be exactly the same price as the Seller's latest offer.
+If you are only making or repeating your own offer, "accepted" must be false, even if you call it your final offer.
+Do not write anything outside the JSON object.
+```
 
-System prompt:
+### Seller
 
-> You are selling the used car. Your private minimum is NOK 160000. Never reveal this limit. Try to obtain the highest possible price. End every reply with exactly one action: OFFER: <integer>, ACCEPT: <integer>, or NO DEAL. Never accept less than NOK 160000. Reply in at most 2 sentences.
+```text
+You are a private seller negotiating with a buyer for a used car advertised at NOK 200000. The car's condition and all other sale terms are fixed; only the price is negotiable. Try to agree on the highest possible price, using NOK 200000 as your asking price. Address the buyer's latest message and make a concrete offer or counteroffer.
+Respond ONLY with valid JSON in exactly this structure:
+{
+  "message": "your short negotiation reply",
+  "offer": 197500,
+  "accepted": false
+}
+"message" contains what you want to say to the Buyer. "offer" contains your current price as an integer.
+Set "accepted" to true only when you explicitly accept the Buyer's latest offered price.
+If "accepted" is true, "offer" must be exactly the same price as the Buyer's latest offer.
+If you are only making or repeating your own offer, "accepted" must be false, even if you call it your final offer.
+Do not write anything outside the JSON object.
+```
 
-## Measurable goal
+## Measurable goal and detection
 
-The negotiation is resolved when one agent accepts the other agent's immediately preceding offer at the same price between NOK 160000 and NOK 180000, or when an agent explicitly declares NO DEAL.
+The goal is agreement on one positive price: the latest reply must explicitly accept the previous agent's exact offer. Each reply is JSON with message (string), offer (integer, excluding booleans) and accepted (boolean).
 
-## Planned detection
+negotiation_goal_reached() requires at least two entries, parses both with parse_agent_reply(), and returns true only when:
 
-A later goal-checking function will extract OFFER and ACCEPT amounts from the transcript and verify that an accepted amount matches the immediately preceding offer and satisfies both agents' price limits. NO DEAL will be recorded as an unsuccessful but valid resolution.
+```python
+return (
+    current["accepted"] is True
+    and current["offer"] == previous["offer"]
+    and previous["offer"] > 0
+)
+```
 
-## Initial observation
+Invalid replies do not count as agreement. The engine alternates Buyer and Seller, so consecutive entries come from opposite parties. Agreement stops the run with goal_reached. This detects structured acceptance, not factual accuracy, fairness or economic optimality. The configured agents have no enforced private ceiling or floor.
 
-In the first real test, the Buyer offered NOK 150000 and the Seller countered with NOK 175000. The Seller followed the required output format but described its price as non-negotiable while simultaneously making a concession, showing that format compliance does not guarantee logically consistent reasoning.
+## Conversation control and evaluation
+
+The Python engine stores a neutral transcript. view_for() gives each agent its own system prompt, marks its earlier messages as assistant and the other agent's messages as user. A sliding window retains the system prompt and the latest 19 conversation messages; the saved transcript remains complete. This avoids a summarisation call, but may forget old commitments and does not guarantee a token ceiling. With a 12-turn limit, normal runs do not reach the 20-message truncation threshold.
+
+An invalid reply gets one retry. If that also fails, the engine saves the raw reply inside a valid fallback with offer=0 and accepted=false. Both calls' costs count toward the same turn. Budget checks occur between turns, so an in-progress call can exceed a time or token limit before the next check.
+
+A separate judge call uses llama3.2:3b at temperature 0 and returns a reason, score (1–5) and success flag. Invalid judge output produces null score and success values. The deterministic goal check remains the primary agreement measure; judge evaluations can be wrong. JSON transcripts save messages, settings, costs, stopping information and the judge result. Negotiation metrics exclude the judge call.
